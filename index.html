@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>NOTAM Airspace Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --bg:     #0a0d12;
+    --panel:  #111620;
+    --border: #1e2a3a;
+    --accent: #00d4ff;
+    --text:   #c8d8e8;
+    --muted:  #4a6070;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: 'Barlow Condensed', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 20px;
+    height: 54px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    z-index: 1000;
+  }
+  .logo { font-family: 'Share Tech Mono', monospace; font-size: 15px; color: var(--accent); letter-spacing: 2px; white-space: nowrap; }
+  .logo span { color: var(--muted); }
+  #fileInput { display: none; }
+  .upload-btn {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 16px; background: transparent;
+    border: 1px solid var(--accent); color: var(--accent);
+    font-family: 'Barlow Condensed', sans-serif; font-size: 14px;
+    font-weight: 500; letter-spacing: 1px; cursor: pointer; transition: all .2s; white-space: nowrap;
+  }
+  .upload-btn:hover { background: var(--accent); color: var(--bg); }
+  #fileName { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 280px; }
+  .stats { display: flex; gap: 16px; margin-left: auto; align-items: center; flex-shrink: 0; }
+  .stat { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--muted); text-align: center; line-height: 1.3; }
+  .stat strong { display: block; font-size: 18px; color: var(--text); }
+  .export-btn {
+    padding: 7px 16px; background: transparent; border: 1px solid #22dd66; color: #22dd66;
+    font-family: 'Barlow Condensed', sans-serif; font-size: 14px; font-weight: 500;
+    letter-spacing: 1px; cursor: pointer; transition: all .2s; white-space: nowrap;
+  }
+  .export-btn:hover { background: #22dd66; color: var(--bg); }
+  .export-btn:disabled { border-color: var(--muted); color: var(--muted); cursor: not-allowed; }
+  .export-btn:disabled:hover { background: transparent; color: var(--muted); }
+  /* Event upload button */
+  .event-btn {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 16px; background: transparent;
+    border: 1px solid #aaaaaa; color: #aaaaaa;
+    font-family: 'Barlow Condensed', sans-serif; font-size: 14px;
+    font-weight: 500; letter-spacing: 1px; cursor: pointer; transition: all .2s; white-space: nowrap;
+  }
+  .event-btn:hover { background: #aaaaaa; color: var(--bg); }
+  .event-btn.loaded { border-color: #888; color: #888; }
+  #eventFileName { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
+  /* Event toggle in sidebar */
+  .event-toggle-row {
+    display: flex; align-items: center; gap: 10px; padding: 8px 16px;
+    border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; transition: background .15s;
+  }
+  .event-toggle-row:hover { background: rgba(255,255,255,.03); }
+  .event-toggle-row.hidden { opacity: .35; }
+  .event-section-header { font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: 2px; color: #888; padding: 10px 16px 6px; border-top: 1px solid var(--border); }
+  #eventList { max-height: 180px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .event-item { padding: 6px 16px; border-bottom: 1px solid rgba(255,255,255,.03); cursor: pointer; display: flex; align-items: center; gap: 8px; transition: background .1s; font-size: 12px; }
+  .event-item:hover { background: rgba(180,180,180,.06); }
+  .event-item.active { background: rgba(180,180,180,.12); }
+  .event-dot { width: 8px; height: 8px; border-radius: 50%; background: #aaaaaa; flex-shrink: 0; border: 1px dashed #888; }
+  main { display: flex; flex: 1; overflow: hidden; }
+  aside {
+    width: 240px; flex-shrink: 0; background: var(--panel);
+    border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden;
+  }
+  .sidebar-title { font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: 2px; color: var(--muted); padding: 12px 16px 8px; border-bottom: 1px solid var(--border); }
+  .tiers { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .tier-row { display: flex; align-items: center; gap: 10px; padding: 6px 16px; cursor: pointer; transition: background .15s; user-select: none; }
+  .tier-row:hover { background: rgba(255,255,255,.03); }
+  .tier-row.hidden { opacity: .35; }
+  .tier-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  .tier-label { font-size: 14px; font-weight: 500; flex: 1; }
+  .tier-ft { font-family: 'Share Tech Mono', monospace; font-size: 11px; color: var(--muted); }
+  .tier-count { font-family: 'Share Tech Mono', monospace; font-size: 12px; background: rgba(255,255,255,.07); padding: 1px 6px; border-radius: 3px; min-width: 28px; text-align: center; }
+  .list-header { font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: 2px; color: var(--muted); padding: 10px 16px 6px; }
+  #notamList { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+  .notam-item { padding: 7px 16px; border-bottom: 1px solid rgba(255,255,255,.03); cursor: pointer; display: flex; align-items: center; gap: 8px; transition: background .1s; }
+  .notam-item:hover { background: rgba(0,212,255,.06); }
+  .notam-item.active { background: rgba(0,212,255,.12); }
+  .notam-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .notam-id { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--accent); }
+  .notam-info { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--muted); padding: 20px; text-align: center; }
+  .empty-icon { font-size: 32px; opacity: .4; }
+  .empty-text { font-size: 13px; line-height: 1.5; }
+  #map { flex: 1; background: #0d1520; }
+  #errorBanner {
+    display: none; position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: #ff2244; color: #fff; font-family: 'Share Tech Mono', monospace;
+    font-size: 13px; padding: 10px 24px; border-radius: 4px; z-index: 9999; max-width: 80%; text-align: center;
+  }
+  #loading {
+    position: fixed; inset: 0; background: rgba(10,13,18,.85);
+    display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 9999; gap: 16px;
+  }
+  .spinner { width: 40px; height: 40px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-text { font-family: 'Share Tech Mono', monospace; font-size: 13px; color: var(--accent); }
+  .leaflet-popup-content-wrapper { background: var(--panel) !important; border: 1px solid var(--border) !important; border-radius: 4px !important; box-shadow: 0 8px 32px rgba(0,0,0,.6) !important; color: var(--text) !important; font-family: 'Barlow Condensed', sans-serif !important; }
+  .leaflet-popup-tip { background: var(--panel) !important; }
+  .leaflet-popup-content { margin: 12px 16px !important; }
+  .popup-notam { font-family: 'Share Tech Mono', monospace; font-size: 15px; color: var(--accent); margin-bottom: 8px; }
+  .popup-row { display: flex; gap: 8px; font-size: 13px; margin-bottom: 3px; }
+  .popup-key { color: var(--muted); min-width: 70px; }
+  .popup-val { color: var(--text); font-weight: 500; }
+  .popup-badge { display: inline-block; padding: 1px 8px; border-radius: 3px; font-size: 12px; font-weight: 700; letter-spacing: 1px; }
+  /* ── DRAW TOOLBAR OVERRIDES ── */
+  .leaflet-draw-toolbar a {
+    background-color: var(--panel) !important;
+    border-color: var(--border) !important;
+  }
+  .leaflet-draw-toolbar a:hover {
+    background-color: var(--accent) !important;
+  }
+  .leaflet-draw-section { border-color: var(--border) !important; }
+
+  /* ── MEASURE RESULTS PANEL ── */
+  #measurePanel {
+    display: none;
+    position: fixed;
+    bottom: 30px;
+    right: 20px;
+    z-index: 1000;
+    background: var(--panel);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    padding: 14px 18px;
+    min-width: 220px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.6);
+  }
+  #measurePanel .mp-title {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--accent);
+    margin-bottom: 10px;
+  }
+  #measurePanel .mp-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    margin-bottom: 5px;
+    gap: 16px;
+  }
+  #measurePanel .mp-key { color: var(--muted); }
+  #measurePanel .mp-val { color: var(--text); font-weight: 600; font-family: 'Share Tech Mono', monospace; font-size: 12px; }
+  #measurePanel .mp-clear {
+    margin-top: 10px;
+    width: 100%;
+    padding: 5px;
+    background: transparent;
+    border: 1px solid var(--muted);
+    color: var(--muted);
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 13px;
+    cursor: pointer;
+    letter-spacing: 1px;
+    transition: all .2s;
+  }
+  #measurePanel .mp-clear:hover { border-color: var(--red,#ff2244); color: #ff2244; }
+
+  body.drag-over::after {
+    content: 'DROP EXCEL FILE HERE';
+    position: fixed; inset: 0; background: rgba(0,212,255,.08);
+    border: 3px dashed var(--accent); display: flex; align-items: center; justify-content: center;
+    font-family: 'Share Tech Mono', monospace; font-size: 22px; color: var(--accent);
+    letter-spacing: 4px; z-index: 9998; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">NOTAM<span>//</span>AIRSPACE</div>
+  <button class="upload-btn" onclick="document.getElementById('fileInput').click()">⬆ UPLOAD NOTAM</button>
+  <input type="file" id="fileInput" accept=".xlsx,.xls"/>
+  <span id="fileName">No file loaded — upload daily NOTAM export</span>
+  <div style="width:1px;height:30px;background:var(--border);flex-shrink:0;"></div>
+  <button class="event-btn" id="eventUploadBtn" onclick="document.getElementById('eventFileInput').click()">⬆ UPLOAD EVENTS</button>
+  <input type="file" id="eventFileInput" accept=".xlsx,.xls" style="display:none"/>
+  <span id="eventFileName">No event file</span>
+  <div class="stats">
+    <div class="stat"><strong id="statTotal">—</strong>NOTAM</div>
+    <div class="stat"><strong id="statShown">—</strong>SHOWN</div>
+    <div class="stat"><strong id="statEvents">—</strong>EVENTS</div>
+  </div>
+  <button class="export-btn" id="exportBtn" onclick="exportKMZ()" disabled>⬇ EXPORT KMZ</button>
+</header>
+
+<main>
+  <aside>
+    <div class="sidebar-title">HEIGHT TIERS</div>
+    <div class="tiers" id="tierLegend"></div>
+    <div class="list-header">NOTAM LIST</div>
+    <div id="notamList">
+      <div class="empty-state">
+        <div class="empty-icon">🛩</div>
+        <div class="empty-text">Upload your daily Excel export to display NOTAM airspace circles</div>
+      </div>
+    </div>
+    <!-- EVENT LAYER SECTION -->
+    <div class="event-section-header">EVENT LAYER</div>
+    <div class="event-toggle-row" id="eventToggleRow" onclick="toggleEventLayer()">
+      <div class="event-dot"></div>
+      <div style="flex:1;font-size:13px;font-weight:500;color:#aaa;">NO - NOTAM Events</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:#666;" id="eventToggleLabel">HIDDEN</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:12px;background:rgba(255,255,255,.07);padding:1px 6px;border-radius:3px;min-width:28px;text-align:center;" id="cntEvents">0</div>
+    </div>
+    <div id="eventList"></div>
+  </aside>
+  <div id="map" style="position:relative;"></div>
+  <!-- Measure Results Panel -->
+  <div id="measurePanel">
+    <div class="mp-title">📐 MEASURE RESULT</div>
+    <div class="mp-row"><span class="mp-key">Shape</span><span class="mp-val" id="mpShape">—</span></div>
+    <div class="mp-row"><span class="mp-key">Radius</span><span class="mp-val" id="mpRadius">—</span></div>
+    <div class="mp-row"><span class="mp-key">Area</span><span class="mp-val" id="mpArea">—</span></div>
+    <div class="mp-row"><span class="mp-key">Perimeter</span><span class="mp-val" id="mpPerim">—</span></div>
+    <button class="mp-clear" onclick="clearDrawings()">✕ CLEAR ALL DRAWINGS</button>
+  </div>
+</main>
+
+<div id="loading"><div class="spinner"></div><div class="loading-text">PARSING NOTAM DATA…</div></div>
+<div id="errorBanner"></div>
+
+<script>
+const TIERS = [
+  { name:'Purple', ft:6000,  hex:'#cc44ff' },
+  { name:'Yellow', ft:10000, hex:'#ffdd00' },
+  { name:'Brown',  ft:15000, hex:'#c8621a' },
+  { name:'Green',  ft:19000, hex:'#22dd66' },
+  { name:'Red',    ft:23000, hex:'#ff2244' },
+];
+
+let allData = [], circleMap = {}, visibility = {};
+TIERS.forEach(t => visibility[t.name] = true);
+
+// MAP
+const map = L.map('map',{zoomControl:true}).setView([13.5,100.5],6);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+  attribution:'© OpenStreetMap © CARTO', maxZoom:19
+}).addTo(map);
+
+// LEGEND
+function buildLegend() {
+  const el = document.getElementById('tierLegend');
+  el.innerHTML = '';
+  TIERS.forEach(t => {
+    const row = document.createElement('div');
+    row.className = 'tier-row';
+    row.id = 'row_'+t.name;
+    row.innerHTML = `<div class="tier-dot" style="background:${t.hex}"></div><div class="tier-label">${t.name}</div><div class="tier-ft">${t.ft/1000}k FT</div><div class="tier-count" id="cnt_${t.name}">0</div>`;
+    row.addEventListener('click', () => toggleTier(t.name));
+    el.appendChild(row);
+  });
+}
+buildLegend();
+
+function toggleTier(name) {
+  visibility[name] = !visibility[name];
+  document.getElementById('row_'+name).classList.toggle('hidden', !visibility[name]);
+  allData.filter(d=>d.tier===name).forEach(d=>{
+    const c=circleMap[d.key];
+    if(c) visibility[name]?c.addTo(map):map.removeLayer(c);
+  });
+  updateStats();
+}
+
+function nearestTier(ft) {
+  return TIERS.reduce((b,t)=>Math.abs(t.ft-ft)<Math.abs(b.ft-ft)?t:b);
+}
+
+// FILE HANDLING
+document.getElementById('fileInput').addEventListener('change', e=>{
+  if(e.target.files[0]) loadFile(e.target.files[0]);
+  e.target.value='';
+});
+document.body.addEventListener('dragover', e=>{e.preventDefault();document.body.classList.add('drag-over');});
+document.body.addEventListener('dragleave', e=>{if(!e.relatedTarget)document.body.classList.remove('drag-over');});
+document.body.addEventListener('drop', e=>{
+  e.preventDefault(); document.body.classList.remove('drag-over');
+  if(e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+
+function showError(msg) {
+  const el=document.getElementById('errorBanner');
+  el.textContent=msg; el.style.display='block';
+  setTimeout(()=>el.style.display='none', 6000);
+}
+
+function loadFile(file) {
+  document.getElementById('loading').style.display='flex';
+  document.getElementById('fileName').textContent=file.name;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try {
+      const wb=XLSX.read(new Uint8Array(e.target.result),{type:'array'});
+      const sheetName=wb.SheetNames.includes('Sheet2')?'Sheet2':wb.SheetNames[0];
+      const rows=XLSX.utils.sheet_to_json(wb.Sheets[sheetName],{defval:''});
+      processData(rows);
+    } catch(err) {
+      console.error(err);
+      showError('Error reading file: '+err.message);
+    }
+    document.getElementById('loading').style.display='none';
+  };
+  reader.onerror=()=>{ showError('Could not read file.'); document.getElementById('loading').style.display='none'; };
+  reader.readAsArrayBuffer(file);
+}
+
+// Smart column finder — trims and lowercases for comparison
+function getVal(row, candidates) {
+  const keys = Object.keys(row);
+  for (const c of candidates) {
+    const match = keys.find(k => k.trim().toLowerCase() === c.toLowerCase());
+    if (match !== undefined && String(row[match]).trim() !== '') return String(row[match]).trim();
+  }
+  return '';
+}
+
+function processData(rows) {
+  Object.values(circleMap).forEach(c=>map.removeLayer(c));
+  circleMap={}; allData=[];
+  let skipped=0;
+  const bounds=[];
+
+  rows.forEach((row,idx)=>{
+    const notam = getVal(row,['NOTAM','notam','Notam','ID']);
+    const prov  = getVal(row,['Province','province','PROVINCE']).replace(/_x000D_/g,'').trim();
+    const latRaw= getVal(row,['LAT','lat','Lat','Latitude']);
+    const lonRaw= getVal(row,['LONG','lon','Lon','Long','LON','Longitude']);
+    // Remove any NM/FT suffixes and leading spaces before parsing
+    const nmRaw = getVal(row,['Radius','radius','RADIUS']).replace(/NM/gi,'').trim();
+    const ftRaw = getVal(row,['Height','height','HEIGHT']).replace(/FT/gi,'').trim();
+
+    const lat=parseFloat(latRaw), lon=parseFloat(lonRaw);
+    const nm=parseFloat(nmRaw),   ft=parseFloat(ftRaw);
+
+    if(isNaN(lat)||isNaN(lon)||isNaN(nm)||isNaN(ft)){
+      skipped++;
+      return;
+    }
+
+    const tier=nearestTier(ft);
+    const altM=ft*0.3048, radM=nm*1852;
+    const key=notam||'row_'+idx;
+
+    const circle=L.circle([lat,lon],{
+      radius:radM, color:tier.hex, fillColor:tier.hex, fillOpacity:0.12, weight:2
+    }).addTo(map);
+
+    circle.bindPopup(`
+      <div class="popup-notam">${notam||'N/A'}</div>
+      <div class="popup-row"><span class="popup-key">Province</span><span class="popup-val">${prov||'—'}</span></div>
+      <div class="popup-row"><span class="popup-key">Center</span><span class="popup-val">${lat.toFixed(5)}°N, ${lon.toFixed(5)}°E</span></div>
+      <div class="popup-row"><span class="popup-key">Radius</span><span class="popup-val">${nm} NM</span></div>
+      <div class="popup-row"><span class="popup-key">Height</span><span class="popup-val">${ft.toLocaleString()} FT / ${altM.toFixed(0)} m</span></div>
+      <div class="popup-row"><span class="popup-key">Tier</span>
+        <span class="popup-badge" style="background:${tier.hex}22;color:${tier.hex};border:1px solid ${tier.hex}55">${tier.name} · ${tier.ft.toLocaleString()} FT</span>
+      </div>`);
+
+    circleMap[key]=circle;
+    bounds.push([lat,lon]);
+    allData.push({notam,key,prov,lat,lon,ft,nm,altM,radM,tier:tier.name,tierObj:tier});
+  });
+
+  if(allData.length===0) {
+    showError('No valid rows found. Make sure columns: LAT, LONG, Radius, Height exist.');
+  } else if(skipped>0) {
+    showError(`${skipped} rows skipped (missing/invalid data). ${allData.length} circles drawn.`);
+  }
+
+  if(bounds.length) map.fitBounds(bounds,{padding:[40,40]});
+
+  buildList();
+  updateStats();
+  TIERS.forEach(t=>{
+    const el=document.getElementById('cnt_'+t.name);
+    if(el) el.textContent=allData.filter(d=>d.tier===t.name).length;
+  });
+  document.getElementById('exportBtn').disabled=allData.length===0;
+}
+
+function buildList() {
+  const el=document.getElementById('notamList');
+  if(!allData.length){
+    el.innerHTML='<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-text">No valid rows found</div></div>';
+    return;
+  }
+  el.innerHTML='';
+  allData.forEach(d=>{
+    const item=document.createElement('div');
+    item.className='notam-item';
+    item.innerHTML=`<div class="notam-dot" style="background:${d.tierObj.hex}"></div><div><div class="notam-id">${d.notam||d.key}</div><div class="notam-info">${d.prov||'—'} · ${d.nm}NM · ${d.ft.toLocaleString()}FT</div></div>`;
+    item.addEventListener('click',()=>{
+      document.querySelectorAll('.notam-item').forEach(i=>i.classList.remove('active'));
+      item.classList.add('active');
+      const c=circleMap[d.key];
+      if(c){map.flyTo([d.lat,d.lon],9,{animate:true,duration:.8});setTimeout(()=>c.openPopup(),900);}
+    });
+    el.appendChild(item);
+  });
+}
+
+function updateStats() {
+  document.getElementById('statTotal').textContent=allData.length;
+  document.getElementById('statShown').textContent=allData.filter(d=>visibility[d.tier]).length;
+}
+
+// EXPORT KMZ
+function exportKMZ() {
+  if(!allData.length) return;
+  function hkml(hex,a='ff'){return a+hex.slice(5,7)+hex.slice(3,5)+hex.slice(1,3);}
+  function pts(lat,lon,rM,aM,n=72){
+    const r=[];
+    for(let i=0;i<=n;i++){const a=(i*2*Math.PI)/n,dl=(rM/111320)*Math.cos(a),dm=(rM/(111320*Math.cos(lat*Math.PI/180)))*Math.sin(a);r.push(`${(lon+dm).toFixed(6)},${(lat+dl).toFixed(6)},${aM.toFixed(1)}`);}
+    return r.join(' ');
+  }
+  const L2=[];
+  L2.push('<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document>');
+  L2.push(`<name>NOTAM Airspace — ${new Date().toLocaleDateString('en-GB')}</name>`);
+  TIERS.forEach(t=>L2.push(`<Style id="s_${t.name}"><LineStyle><color>${hkml(t.hex)}</color><width>2.5</width></LineStyle><PolyStyle><color>${hkml(t.hex,'33')}</color><outline>1</outline></PolyStyle></Style>`));
+  const g={};TIERS.forEach(t=>g[t.name]=[]);allData.forEach(d=>g[d.tier].push(d));
+  TIERS.forEach(t=>{
+    L2.push(`<Folder><name>${t.name} ● ${t.ft.toLocaleString()} FT (${g[t.name].length})</name>`);
+    g[t.name].forEach(d=>L2.push(`<Placemark><name>${d.notam}</name><description><![CDATA[<b>Province:</b> ${d.prov}<br/><b>Center:</b> ${d.lat.toFixed(6)}°N, ${d.lon.toFixed(6)}°E<br/><b>Radius:</b> ${d.nm} NM<br/><b>Height:</b> ${d.ft.toLocaleString()} FT]]></description><styleUrl>#s_${d.tier}</styleUrl><Polygon><extrude>1</extrude><altitudeMode>absolute</altitudeMode><outerBoundaryIs><LinearRing><coordinates>${pts(d.lat,d.lon,d.radM,d.altM)}</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>`));
+    L2.push('</Folder>');
+  });
+  L2.push('</Document></kml>');
+
+  const kb=new TextEncoder().encode(L2.join('\n'));
+  function u16(n){return[n&0xff,(n>>8)&0xff];}
+  function u32(n){return[n&0xff,(n>>8)&0xff,(n>>16)&0xff,(n>>24)&0xff];}
+  const ct=(()=>{const t=new Uint32Array(256);for(let i=0;i<256;i++){let c=i;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[i]=c;}return t;})();
+  function crc(b){let c=0xFFFFFFFF;for(let i=0;i<b.length;i++)c=ct[(c^b[i])&0xFF]^(c>>>8);return(c^0xFFFFFFFF)>>>0;}
+  const fn=new TextEncoder().encode('doc.kml'),cr=crc(kb),now=new Date();
+  const dd=((now.getFullYear()-1980)<<9)|((now.getMonth()+1)<<5)|now.getDate();
+  const dt=(now.getHours()<<11)|(now.getMinutes()<<5)|(now.getSeconds()>>1);
+  const lfh=[0x50,0x4B,0x03,0x04,20,0,0,0,0,0,...u16(dt),...u16(dd),...u32(cr),...u32(kb.length),...u32(kb.length),...u16(fn.length),0,0,...fn];
+  const cdr=[0x50,0x4B,0x01,0x02,20,0,20,0,0,0,0,0,...u16(dt),...u16(dd),...u32(cr),...u32(kb.length),...u32(kb.length),...u16(fn.length),0,0,0,0,0,0,0,0,0,0,0,0,...u32(0),...fn];
+  const eocd=[0x50,0x4B,0x05,0x06,0,0,0,0,1,0,1,0,...u32(cdr.length),...u32(lfh.length+kb.length),0,0];
+  const zip=new Uint8Array(lfh.length+kb.length+cdr.length+eocd.length);
+  zip.set(lfh,0);zip.set(kb,lfh.length);zip.set(cdr,lfh.length+kb.length);zip.set(eocd,lfh.length+kb.length+cdr.length);
+  const url=URL.createObjectURL(new Blob([zip],{type:'application/vnd.google-earth.kmz'}));
+  const a=document.createElement('a');a.href=url;a.download=`notam_${new Date().toISOString().slice(0,10)}.kmz`;a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── LEAFLET DRAW TOOLBAR ───────────────────────────────────────────────────
+// Override draw tooltip units to show NM instead of miles/km
+L.drawLocal.draw.handlers.circle.radius = 'Radius (NM)';
+L.drawLocal.draw.handlers.polyline.tooltip.cont = 'Click to continue. Length in NM.';
+L.drawLocal.draw.handlers.polyline.tooltip.end  = 'Click last point to finish.';
+
+const drawnItems = new L.FeatureGroup();
+map.addLayer(drawnItems);
+
+const drawControl = new L.Control.Draw({
+  position: 'topleft',
+  draw: {
+    circle:    { shapeOptions: { color:'#00d4ff', fillOpacity:0.1, weight:2 }, showRadius:true, metric:false, feet:false },
+    rectangle: { shapeOptions: { color:'#00d4ff', fillOpacity:0.1, weight:2 }, metric:false, feet:false },
+    polygon:   { shapeOptions: { color:'#00d4ff', fillOpacity:0.1, weight:2 }, showArea:true, metric:false, feet:false },
+    polyline:  { shapeOptions: { color:'#00d4ff', weight:2 }, metric:false, feet:false },
+    marker:    false,
+    circlemarker: false,
+  },
+  edit: {
+    featureGroup: drawnItems,
+    remove: true,
+  }
+});
+map.addControl(drawControl);
+
+// Helper formatters — all distances in NM only
+function fmtM(m) {
+  return (m/1852).toFixed(3)+' NM';
+}
+function fmtNM(m) {
+  return (m/1852).toFixed(3)+' NM';
+}
+function fmtArea(m2) {
+  // Area in NM²
+  return (m2/(1852*1852)).toFixed(4)+' NM²';
+}
+
+// Calculate polygon perimeter in meters
+function polyPerimeter(latlngs) {
+  let total = 0;
+  const pts = latlngs[0] || latlngs;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i], b = pts[(i+1) % pts.length];
+    total += map.distance(a, b);
+  }
+  return total;
+}
+
+function showPanel(shape, radius, area, perim) {
+  document.getElementById('mpShape').textContent  = shape;
+  document.getElementById('mpRadius').textContent = radius || '—';
+  document.getElementById('mpArea').textContent   = area   || '—';
+  document.getElementById('mpPerim').textContent  = perim  || '—';
+  document.getElementById('measurePanel').style.display = 'block';
+}
+
+// When user finishes drawing
+map.on(L.Draw.Event.CREATED, function(e) {
+  const layer = e.layer;
+  const type  = e.layerType;
+  drawnItems.addLayer(layer);
+
+  if (type === 'circle') {
+    const r = layer.getRadius();
+    showPanel('Circle',
+      fmtNM(r),
+      fmtArea(Math.PI * r * r),
+      fmtNM(2 * Math.PI * r)
+    );
+  } else if (type === 'rectangle' || type === 'polygon') {
+    const latlngs = layer.getLatLngs();
+    const area    = L.GeometryUtil.geodesicArea(latlngs[0]);
+    const perim   = polyPerimeter(latlngs);
+    showPanel(type === 'rectangle' ? 'Rectangle' : 'Polygon',
+      null,
+      fmtArea(area),
+      fmtNM(perim)
+    );
+  } else if (type === 'polyline') {
+    const latlngs = layer.getLatLngs();
+    let total = 0;
+    for (let i = 0; i < latlngs.length - 1; i++) total += map.distance(latlngs[i], latlngs[i+1]);
+    showPanel('Line', null, null, fmtNM(total));
+  }
+});
+
+// Update panel when shape is edited
+map.on(L.Draw.Event.EDITED, function(e) {
+  e.layers.eachLayer(layer => {
+    if (layer instanceof L.Circle) {
+      const r = layer.getRadius();
+      showPanel('Circle', fmtNM(r), fmtArea(Math.PI*r*r), fmtNM(2*Math.PI*r));
+    }
+  });
+});
+
+function clearDrawings() {
+  drawnItems.clearLayers();
+  document.getElementById('measurePanel').style.display = 'none';
+}
+
+// ── EVENT LAYER (Fire / Lantern permits) ───────────────────────────────────
+let eventData    = [];
+let eventCircles = [];
+let eventVisible = true;
+
+document.getElementById('eventFileInput').addEventListener('change', e => {
+  if (e.target.files[0]) loadEventFile(e.target.files[0]);
+  e.target.value = '';
+});
+
+function loadEventFile(file) {
+  document.getElementById('loading').style.display = 'flex';
+  document.getElementById('eventFileName').textContent = file.name;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const wb   = XLSX.read(new Uint8Array(e.target.result), { type:'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows  = XLSX.utils.sheet_to_json(sheet, { defval:'' });
+      processEventData(rows);
+    } catch(err) {
+      console.error(err);
+      showError('Error reading event file: ' + err.message);
+    }
+    document.getElementById('loading').style.display = 'none';
+  };
+  reader.onerror = () => {
+    showError('Could not read event file.');
+    document.getElementById('loading').style.display = 'none';
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function processEventData(rows) {
+  // Clear old event circles
+  eventCircles.forEach(c => map.removeLayer(c));
+  eventCircles = [];
+  eventData    = [];
+
+  const EVENT_RADIUS_M = 5 * 1852; // 5 NM in meters
+  const bounds = [];
+
+  rows.forEach((row, idx) => {
+    // Try Thai column names first, then common fallbacks
+    const dateVal = getVal(row, ['วันที่จัดกิจกรรม','วันที่','date','Date','DATE','Event Date']);
+    const latRaw  = getVal(row, ['ละติจูด','lat','LAT','Lat','Latitude','latitude']);
+    const lonRaw  = getVal(row, ['ลองจิจูด','lon','LON','Long','LONG','Longitude','longitude']);
+    // Extra info columns if available
+    const name    = getVal(row, ['ชื่อผู้ขอ','ชื่อ','name','Name','ชื่อกิจกรรม']) || ('Event '+(idx+1));
+    const province= getVal(row, ['จังหวัด','Province','province','PROVINCE']) || '';
+    const type    = getVal(row, ['ประเภท','type','Type','ชนิด']) || '';
+
+    const lat = parseFloat(latRaw);
+    const lon = parseFloat(lonRaw);
+    if (isNaN(lat) || isNaN(lon)) return;
+
+    const circle = L.circle([lat, lon], {
+      radius:      EVENT_RADIUS_M,
+      color:       '#aaaaaa',
+      fillColor:   '#aaaaaa',
+      fillOpacity: 0.08,
+      weight:      1.5,
+      dashArray:   '6 4',   // dashed border to distinguish from NOTAM circles
+    }).addTo(map);
+
+    circle.bindPopup(`
+      <div class="popup-notam" style="color:#aaa;">🎆 ${name}</div>
+      <div class="popup-row"><span class="popup-key">Date</span><span class="popup-val">${dateVal||'—'}</span></div>
+      <div class="popup-row"><span class="popup-key">Province</span><span class="popup-val">${province||'—'}</span></div>
+      <div class="popup-row"><span class="popup-key">Type</span><span class="popup-val">${type||'—'}</span></div>
+      <div class="popup-row"><span class="popup-key">Center</span><span class="popup-val">${lat.toFixed(5)}°N, ${lon.toFixed(5)}°E</span></div>
+      <div class="popup-row"><span class="popup-key">Radius</span><span class="popup-val">5 NM (fixed)</span></div>
+      <div class="popup-row"><span class="popup-key">Layer</span>
+        <span class="popup-badge" style="background:#aaa2;color:#aaa;border:1px solid #aaa4">Event / Permit</span>
+      </div>`);
+
+    eventCircles.push(circle);
+    bounds.push([lat, lon]);
+    eventData.push({ name, dateVal, province, type, lat, lon, idx });
+  });
+
+  // Show/set visibility
+  eventVisible = true;
+  document.getElementById('eventToggleRow').classList.remove('hidden');
+  document.getElementById('eventToggleLabel').textContent = 'SHOWN';
+  document.getElementById('cntEvents').textContent = eventData.length;
+  document.getElementById('statEvents').textContent = eventData.length;
+  document.getElementById('eventUploadBtn').classList.add('loaded');
+
+  if (!eventData.length) {
+    showError('No valid rows found in event file. Need columns: ละติจูด, ลองจิจูด');
+  }
+
+  buildEventList();
+
+  // Only fit bounds if no NOTAM data loaded yet
+  if (!allData.length && bounds.length) map.fitBounds(bounds, { padding:[40,40] });
+}
+
+function buildEventList() {
+  const el = document.getElementById('eventList');
+  if (!eventData.length) { el.innerHTML = ''; return; }
+  el.innerHTML = '';
+  eventData.forEach((d, i) => {
+    const item = document.createElement('div');
+    item.className = 'event-item';
+    item.innerHTML = `
+      <div class="event-dot"></div>
+      <div style="overflow:hidden;">
+        <div style="font-family:'Share Tech Mono',monospace;font-size:11px;color:#aaa;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${d.name}</div>
+        <div style="font-size:11px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${d.dateVal||'—'} ${d.province ? '· '+d.province : ''}</div>
+      </div>`;
+    item.addEventListener('click', () => {
+      document.querySelectorAll('.event-item').forEach(x => x.classList.remove('active'));
+      item.classList.add('active');
+      const c = eventCircles[i];
+      if (c) { map.flyTo([d.lat, d.lon], 9, { animate:true, duration:.8 }); setTimeout(() => c.openPopup(), 900); }
+    });
+    el.appendChild(item);
+  });
+}
+
+function toggleEventLayer() {
+  eventVisible = !eventVisible;
+  eventCircles.forEach(c => eventVisible ? c.addTo(map) : map.removeLayer(c));
+  document.getElementById('eventToggleRow').classList.toggle('hidden', !eventVisible);
+  document.getElementById('eventToggleLabel').textContent = eventVisible ? 'SHOWN' : 'HIDDEN';
+}
+</script>
+</body>
+</html>
